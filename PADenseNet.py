@@ -90,7 +90,8 @@ class CompetitiveSE(nn.Module):
                                         OrderedDict(
                                                     [
                                                      ('unCompressReLU',nn.ReLU()),
-                                                     ('unCompressconv1x1',conv1x1(in_channels//3,in_channels,True,1))
+                                                     ('unCompressconv1x1',conv1x1(in_channels//3,in_channels,True,1)),
+                                                     ('Sigmoid',nn.Sigmoid())
                                                     ]
                                                     )
                                         )
