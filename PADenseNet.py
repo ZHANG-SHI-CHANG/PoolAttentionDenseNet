@@ -63,7 +63,7 @@ class DenseNetBlock(nn.Module):
         self.layers = layers
         
         self.DenseNetBlock = nn.ModuleList()
-        for i in range(0,layers-1):
+        for i in range(0,layers):
             self.DenseNetBlock.append(BlockCompress(i*growk+in_channels,growk))
     def forward(self,x):
         features = [x]
@@ -82,7 +82,7 @@ class CompetitiveSE(nn.Module):
                                       OrderedDict(
                                                   [
                                                    ('CompressReLU',nn.ReLU()),
-                                                   ('Compressconv1x1',conv1x1(2*in_channels,in_channels//16,True,1))
+                                                   ('Compressconv1x1',conv1x1(2*in_channels,in_channels//3,True,1))
                                                   ]
                                                   )
                                       )
@@ -90,7 +90,7 @@ class CompetitiveSE(nn.Module):
                                         OrderedDict(
                                                     [
                                                      ('unCompressReLU',nn.ReLU()),
-                                                     ('unCompressconv1x1',conv1x1(in_channels//16,in_channels,True,1))
+                                                     ('unCompressconv1x1',conv1x1(in_channels//3,in_channels,True,1))
                                                     ]
                                                     )
                                         )
@@ -152,7 +152,10 @@ class PoolAttention(nn.Module):
                                                 )
                                     )
         self.Softmax = nn.Softmax(dim=2)
-        self.gamma = Variable(torch.zeros((1),requires_grad=True))
+        if torch.cuda.is_available():
+            self.gamma = torch.zeros((1),requires_grad=True).cuda(0)
+        else:
+            self.gamma = torch.zeros((1),requires_grad=True)
         self.CompetitiveSE = CompetitiveSE(in_channels)
     def forward(self,x):
         if self.isPrimary:
@@ -201,6 +204,7 @@ class FinalModule(nn.Module):
         self.FC = nn.Sequential(
                                 OrderedDict(
                                             [
+                                             ('Dropout',nn.Dropout(0.5)),
                                              ('FC',conv1x1(in_channels,num_classes,True,1))
                                             ]
                                             )
@@ -211,7 +215,7 @@ class FinalModule(nn.Module):
         return x
 
 class PADenseNet(nn.Module):
-    def __init__(self,in_channels,num_classes=1000,growk=32):
+    def __init__(self,in_channels,num_classes=1000,growk=12):
         super(PADenseNet, self).__init__()
         self.in_channels = in_channels
         self.num_classes = num_classes
@@ -220,7 +224,7 @@ class PADenseNet(nn.Module):
         self.layers = [6,12,24,16]
         self.out_channels = [(growk,growk)]
         for i,_layers in enumerate(self.layers):
-            self.out_channels.append( (self.out_channels[i][1]+(_layers-1)*growk,(self.out_channels[i][1]+(_layers-1)*growk)//2) )
+            self.out_channels.append( (self.out_channels[i][1]+_layers*growk,(self.out_channels[i][1]+_layers*growk)//2) )
         
         self.PrimaryModule = PrimaryModule(in_channels,self.out_channels[0][0])
         self.PrimaryPA = PoolAttention(self.out_channels[0][1],True)
@@ -237,8 +241,17 @@ class PADenseNet(nn.Module):
         self.Block4 = DenseNetBlock(self.out_channels[3][1],growk,self.layers[3])
         
         self.FC = FinalModule(self.out_channels[4][0],num_classes)
+        
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                init.kaiming_uniform_(m.weight)
+                if m.bias is not None:
+                    init.constant_(m.bias, 0.0)
+            elif isinstance(m, nn.BatchNorm2d):
+                init.constant_(m.weight, 1.0)
+                if m.bias is not None:
+                    init.constant_(m.bias, 0.0)
     def forward(self,x):
-        print(self.out_channels)
         x = self.PrimaryModule(x)
         x = self.PrimaryPA(x)
         
@@ -253,11 +266,13 @@ class PADenseNet(nn.Module):
         
         x = self.Block4(x)
         x = self.FC(x)
+        
+        x = x.view((x.size(0),x.size(1)))
         return x
 
 if __name__=='__main__':
     import numpy as np
-    net = PADenseNet(3,1000,32)
+    net = PADenseNet(3,1000,12)
     net.train()
     input = torch.randn(1,3,224,224)
     output = net(input)
