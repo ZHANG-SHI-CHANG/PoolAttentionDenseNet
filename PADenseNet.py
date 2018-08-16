@@ -23,9 +23,12 @@ class PrimaryModule(nn.Module):
                                            OrderedDict(
                                                        [
                                                         ('PrimaryBN',nn.BatchNorm2d(in_channels)),
-                                                        ('PrimaryConv7x7',conv7x7(in_channels,out_channels,2,3,True,1)),
-                                                        ('PrimaryConv7x7BN',nn.BatchNorm2d(out_channels)),
-                                                        ('PrimaryConv7x7ReLU',nn.ReLU())
+                                                        ('PrimaryConv3x31',conv3x3(in_channels,out_channels,2,1,False,1)),
+                                                        ('PrimaryConv3x31BN',nn.BatchNorm2d(out_channels)),
+                                                        ('PrimaryConv3x31ReLU',nn.ReLU(inplace=True)),
+                                                        ('PrimaryConv3x32',conv3x3(in_channels,out_channels,1,1,False,1)),
+                                                        ('PrimaryConv3x32BN',nn.BatchNorm2d(out_channels)),
+                                                        ('PrimaryConv3x32ReLU',nn.ReLU(inplace=True))
                                                        ]
                                                        )
                                            )
@@ -43,11 +46,11 @@ class BlockCompress(nn.Module):
                                            OrderedDict(
                                                        [
                                                         ('conv1x1BN',nn.BatchNorm2d(in_channels)),
-                                                        ('conv1x1ReLU',nn.ReLU()),
-                                                        ('conv1x1',conv1x1(in_channels,4*growk,True,1)),
+                                                        ('conv1x1ReLU',nn.ReLU(inplace=True)),
+                                                        ('conv1x1',conv1x1(in_channels,4*growk,False,1)),
                                                         ('conv3x3BN',nn.BatchNorm2d(4*growk)),
-                                                        ('conv3x3ReLU',nn.ReLU()),
-                                                        ('conv3x3',conv3x3(4*growk,growk,1,1,True,1))
+                                                        ('conv3x3ReLU',nn.ReLU(inplace=True)),
+                                                        ('conv3x3',conv3x3(4*growk,growk,1,1,False,1))
                                                        ]
                                                        )
                                            )
@@ -81,16 +84,16 @@ class CompetitiveSE(nn.Module):
         self.Compress = nn.Sequential(
                                       OrderedDict(
                                                   [
-                                                   ('CompressReLU',nn.ReLU()),
-                                                   ('Compressconv1x1',conv1x1(2*in_channels,in_channels//3,True,1))
+                                                   ('CompressReLU',nn.ReLU(inplace=True)),
+                                                   ('Compressconv1x1',conv1x1(2*in_channels,in_channels//16,False,1))
                                                   ]
                                                   )
                                       )
         self.unCompress = nn.Sequential(
                                         OrderedDict(
                                                     [
-                                                     ('unCompressReLU',nn.ReLU()),
-                                                     ('unCompressconv1x1',conv1x1(in_channels//3,in_channels,True,1)),
+                                                     ('unCompressReLU',nn.ReLU(inplace=True)),
+                                                     ('unCompressconv1x1',conv1x1(in_channels//16,in_channels,False,1)),
                                                      ('Sigmoid',nn.Sigmoid())
                                                     ]
                                                     )
@@ -129,8 +132,8 @@ class PoolAttention(nn.Module):
                                     OrderedDict(
                                                 [
                                                  ('RightFBN',nn.BatchNorm2d(in_channels)),
-                                                 ('RightFReLU',nn.ReLU()),
-                                                 ('RightFconv3x3',conv3x3(in_channels,in_channels,2,1,True,1))
+                                                 ('RightFReLU',nn.ReLU(inplace=True)),
+                                                 ('RightFconv3x3',conv3x3(in_channels,in_channels,2,1,False,1))
                                                 ]
                                                 )
                                     )
@@ -138,8 +141,8 @@ class PoolAttention(nn.Module):
                                     OrderedDict(
                                                 [
                                                  ('RightGBN',nn.BatchNorm2d(in_channels)),
-                                                 ('RightGReLU',nn.ReLU()),
-                                                 ('RightGconv3x3',conv3x3(in_channels,in_channels,2,1,True,1))
+                                                 ('RightGReLU',nn.ReLU(inplace=True)),
+                                                 ('RightGconv3x3',conv3x3(in_channels,in_channels,2,1,False,1))
                                                 ]
                                                 )
                                     )
@@ -147,8 +150,8 @@ class PoolAttention(nn.Module):
                                     OrderedDict(
                                                 [
                                                  ('RightHBN',nn.BatchNorm2d(in_channels)),
-                                                 ('RightHReLU',nn.ReLU()),
-                                                 ('RightHconv3x3',conv3x3(in_channels,in_channels,2,1,True,1))
+                                                 ('RightHReLU',nn.ReLU(inplace=True)),
+                                                 ('RightHconv3x3',conv3x3(in_channels,in_channels,2,1,False,1))
                                                 ]
                                                 )
                                     )
@@ -166,12 +169,12 @@ class PoolAttention(nn.Module):
         rightf = self.RightF(x)
         rightg = self.RightG(x)
         righth = self.RightH(x)
-        s = torch.matmul(rightf.view((rightf.size(0),rightf.size(1),-1)).permute(0,2,1),rightg.view((rightg.size(0),rightg.size(1),-1)))
+        s = torch.matmul(rightg.view((rightg.size(0),rightg.size(1),-1)).permute(0,2,1).contiguous(),rightf.view((rightf.size(0),rightf.size(1),-1)))
         s = self.Softmax(s)
-        s = torch.matmul(righth.view(righth.size(0),righth.size(1),-1),s).view(righth.size())
+        s = torch.matmul(s,righth.view(righth.size(0),righth.size(1),-1).permute(0,2,1).contiguous()).permute(0,2,1).contiguous().view(righth.size())
         s = self.gamma*s
         
-        se = self.CompetitiveSE(x,s)
+        se = self.CompetitiveSE(left,s)
         x = (left+s)*(1.0+se)
         return x
 
@@ -185,8 +188,8 @@ class TransitionModule(nn.Module):
                                       OrderedDict(
                                                   [
                                                    ('CompressBN',nn.BatchNorm2d(in_channels)),
-                                                   ('CompressReLU',nn.ReLU()),
-                                                   ('Compressconv1x1',conv1x1(in_channels,in_channels//2,True,1))
+                                                   ('CompressReLU',nn.ReLU(inplace=True)),
+                                                   ('Compressconv1x1',conv1x1(in_channels,in_channels//2,False,1))
                                                   ]
                                                   )
                                       )
@@ -202,11 +205,18 @@ class FinalModule(nn.Module):
         self.in_channels = in_channels
         self.num_classes = num_classes
         
+        self.FinalBatchNorm = nn.Sequential(
+                                            OrderedDict(
+                                                        [
+                                                         ('BatchNorm',nn.BatchNorm2d(in_channels))
+                                                        ]
+                                                        )
+                                            )
         self.FC = nn.Sequential(
                                 OrderedDict(
                                             [
                                              ('Dropout',nn.Dropout(0.5)),
-                                             ('FC',conv1x1(in_channels,num_classes,True,1))
+                                             ('FC',conv1x1(in_channels,num_classes,False,1))
                                             ]
                                             )
                                 )
@@ -223,7 +233,7 @@ class PADenseNet(nn.Module):
         
         self.growk = growk
         self.layers = [6,12,24,16]
-        self.out_channels = [(growk,growk)]
+        self.out_channels = [(64,64)]
         for i,_layers in enumerate(self.layers):
             self.out_channels.append( (self.out_channels[i][1]+_layers*growk,(self.out_channels[i][1]+_layers*growk)//2) )
         
@@ -250,8 +260,7 @@ class PADenseNet(nn.Module):
                     init.constant_(m.bias, 0.0)
             elif isinstance(m, nn.BatchNorm2d):
                 init.constant_(m.weight, 1.0)
-                if m.bias is not None:
-                    init.constant_(m.bias, 0.0)
+                init.constant_(m.bias, 0.0)
     def forward(self,x):
         x = self.PrimaryModule(x)
         x = self.PrimaryPA(x)
