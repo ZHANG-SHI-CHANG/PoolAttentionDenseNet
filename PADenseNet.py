@@ -13,6 +13,9 @@ def conv3x3(in_channels,out_channels,stride=1,padding=1,bias=True,groups=1):
 def conv1x1(in_channels,out_channels,bias=True,groups=1):
     return nn.Conv2d(in_channels,out_channels,kernel_size=1,stride=1,padding=0,bias=True,groups=groups)
 
+isBias = False
+Activate = nn.ReLU
+
 class PrimaryModule(nn.Module):
     def __init__(self,in_channels=3,out_channels=32):
         super(PrimaryModule, self).__init__()
@@ -22,13 +25,12 @@ class PrimaryModule(nn.Module):
         self.PrimaryModule = nn.Sequential(
                                            OrderedDict(
                                                        [
-                                                        ('PrimaryBN',nn.BatchNorm2d(in_channels)),
-                                                        ('PrimaryConv3x31',conv3x3(in_channels,out_channels,2,1,False,1)),
+                                                        ('PrimaryConv3x31',conv3x3(in_channels,out_channels,2,1,isBias,1)),
                                                         ('PrimaryConv3x31BN',nn.BatchNorm2d(out_channels)),
-                                                        ('PrimaryConv3x31ReLU',nn.ReLU(inplace=True)),
-                                                        ('PrimaryConv3x32',conv3x3(in_channels,out_channels,1,1,False,1)),
+                                                        ('PrimaryConv3x31ReLU',Activate()),
+                                                        ('PrimaryConv3x32',conv3x3(in_channels,out_channels,1,1,isBias,1)),
                                                         ('PrimaryConv3x32BN',nn.BatchNorm2d(out_channels)),
-                                                        ('PrimaryConv3x32ReLU',nn.ReLU(inplace=True))
+                                                        ('PrimaryConv3x32ReLU',Activate())
                                                        ]
                                                        )
                                            )
@@ -46,11 +48,11 @@ class BlockCompress(nn.Module):
                                            OrderedDict(
                                                        [
                                                         ('conv1x1BN',nn.BatchNorm2d(in_channels)),
-                                                        ('conv1x1ReLU',nn.ReLU(inplace=True)),
-                                                        ('conv1x1',conv1x1(in_channels,4*growk,False,1)),
+                                                        ('conv1x1ReLU',Activate()),
+                                                        ('conv1x1',conv1x1(in_channels,4*growk,isBias,1)),
                                                         ('conv3x3BN',nn.BatchNorm2d(4*growk)),
-                                                        ('conv3x3ReLU',nn.ReLU(inplace=True)),
-                                                        ('conv3x3',conv3x3(4*growk,growk,1,1,False,1))
+                                                        ('conv3x3ReLU',Activate()),
+                                                        ('conv3x3',conv3x3(4*growk,growk,1,1,isBias,1))
                                                        ]
                                                        )
                                            )
@@ -81,19 +83,29 @@ class CompetitiveSE(nn.Module):
         super(CompetitiveSE, self).__init__()
         self.in_channels = in_channels
         
-        self.Compress = nn.Sequential(
+        self.Compress16 = nn.Sequential(
                                       OrderedDict(
                                                   [
-                                                   ('CompressReLU',nn.ReLU(inplace=True)),
-                                                   ('Compressconv1x1',conv1x1(2*in_channels,in_channels//16,False,1))
+                                                   ('CompressReLU',Activate()),
+                                                   ('Compressconv1x1',conv1x1(2*in_channels,in_channels//16,isBias,1))
+                                                  ]
+                                                  )
+                                      )
+        
+        self.Compress1 = nn.Sequential(
+                                      OrderedDict(
+                                                  [
+                                                   ('CompressReLU',Activate()),
+                                                   ('Compressconv1x1',conv1x1(in_channels//16,1,isBias,1)),
+                                                   ('Sigmoid',nn.Sigmoid())
                                                   ]
                                                   )
                                       )
         self.unCompress = nn.Sequential(
                                         OrderedDict(
                                                     [
-                                                     ('unCompressReLU',nn.ReLU(inplace=True)),
-                                                     ('unCompressconv1x1',conv1x1(in_channels//16,in_channels,False,1)),
+                                                     ('unCompressReLU',Activate()),
+                                                     ('unCompressconv1x1',conv1x1(in_channels//16,in_channels,isBias,1)),
                                                      ('Sigmoid',nn.Sigmoid())
                                                     ]
                                                     )
@@ -104,9 +116,12 @@ class CompetitiveSE(nn.Module):
         weight_x2 = torch.mean(x2,dim=2,keepdim=True)
         weight_x2 = torch.mean(weight_x2,dim=3,keepdim=True)
         weight = torch.cat([weight_x1,weight_x2],dim=1)
-        weight = self.Compress(weight)
-        weight = self.unCompress(weight)
-        return weight
+        
+        weight16 = self.Compress16(weight)
+        
+        weight1 = self.Compress1(weight16)
+        weight = self.unCompress(weight16)
+        return weight*weight1
 
 class PoolAttention(nn.Module):
     def __init__(self,in_channels,isPrimary=False):
@@ -131,18 +146,24 @@ class PoolAttention(nn.Module):
         self.RightF = nn.Sequential(
                                     OrderedDict(
                                                 [
-                                                 ('RightFBN',nn.BatchNorm2d(in_channels)),
-                                                 ('RightFReLU',nn.ReLU(inplace=True)),
-                                                 ('RightFconv3x3',conv3x3(in_channels,in_channels,2,1,False,1))
+                                                 ('RightF1x1BN',nn.BatchNorm2d(in_channels)),
+                                                 ('RightF1x1ReLU',Activate()),
+                                                 ('RightFconv1x1',conv1x1(in_channels,in_channels//8,isBias,1)),
+                                                 ('RightF3x3BN',nn.BatchNorm2d(in_channels//8)),
+                                                 ('RightF3x3ReLU',Activate()),
+                                                 ('RightFconv3x3',conv3x3(in_channels//8,in_channels//8,2,1,isBias,1))
                                                 ]
                                                 )
                                     )
         self.RightG = nn.Sequential(
                                     OrderedDict(
                                                 [
-                                                 ('RightGBN',nn.BatchNorm2d(in_channels)),
-                                                 ('RightGReLU',nn.ReLU(inplace=True)),
-                                                 ('RightGconv3x3',conv3x3(in_channels,in_channels,2,1,False,1))
+                                                 ('RightG1x1BN',nn.BatchNorm2d(in_channels)),
+                                                 ('RightG1x1ReLU',Activate()),
+                                                 ('RightGconv1x1',conv1x1(in_channels,in_channels//8,isBias,1)),
+                                                 ('RightG3x3BN',nn.BatchNorm2d(in_channels//8)),
+                                                 ('RightG3x3ReLU',Activate()),
+                                                 ('RightGconv3x3',conv3x3(in_channels//8,in_channels//8,2,1,isBias,1))
                                                 ]
                                                 )
                                     )
@@ -150,16 +171,13 @@ class PoolAttention(nn.Module):
                                     OrderedDict(
                                                 [
                                                  ('RightHBN',nn.BatchNorm2d(in_channels)),
-                                                 ('RightHReLU',nn.ReLU(inplace=True)),
-                                                 ('RightHconv3x3',conv3x3(in_channels,in_channels,2,1,False,1))
+                                                 ('RightHReLU',Activate()),
+                                                 ('RightHconv3x3',conv3x3(in_channels,in_channels,2,1,isBias,1))
                                                 ]
                                                 )
                                     )
         self.Softmax = nn.Softmax(dim=2)
-        if torch.cuda.is_available():
-            self.gamma = torch.zeros((1),requires_grad=True).cuda(0)
-        else:
-            self.gamma = torch.zeros((1),requires_grad=True)
+        self.gamma = nn.Parameter(torch.zeros((1),requires_grad=True))
         self.CompetitiveSE = CompetitiveSE(in_channels)
     def forward(self,x):
         if self.isPrimary:
@@ -188,8 +206,8 @@ class TransitionModule(nn.Module):
                                       OrderedDict(
                                                   [
                                                    ('CompressBN',nn.BatchNorm2d(in_channels)),
-                                                   ('CompressReLU',nn.ReLU(inplace=True)),
-                                                   ('Compressconv1x1',conv1x1(in_channels,in_channels//2,False,1))
+                                                   ('CompressReLU',Activate()),
+                                                   ('Compressconv1x1',conv1x1(in_channels,in_channels//2,isBias,1))
                                                   ]
                                                   )
                                       )
@@ -215,12 +233,13 @@ class FinalModule(nn.Module):
         self.FC = nn.Sequential(
                                 OrderedDict(
                                             [
-                                             ('Dropout',nn.Dropout(0.5)),
-                                             ('FC',conv1x1(in_channels,num_classes,False,1))
+                                             ('Dropout',nn.Dropout2d(0.25)),
+                                             ('FC',conv1x1(in_channels,num_classes,True,1))
                                             ]
                                             )
                                 )
     def forward(self,x):
+        x = self.FinalBatchNorm(x)
         x = F.avg_pool2d(x, x.data.size()[-2:])
         x = self.FC(x)
         return x
